@@ -1,4 +1,4 @@
-use std::{path::MAIN_SEPARATOR, time::Duration};
+use std::{env, path::MAIN_SEPARATOR, time::Duration};
 
 use clap::{value_t, values_t, ArgMatches};
 use log::{debug, warn};
@@ -15,51 +15,6 @@ pub fn set_commands(builder: &mut ConfigBuilder, matches: &ArgMatches) {
     // and before the remaining arguments
     let features = value_t!(matches, "features", String).ok();
 
-    // Cargo commands are in front of the rest
-    if matches.is_present("cmd:cargo") {
-        for cargo in values_t!(matches, "cmd:cargo", String).unwrap_or_else(|e| e.exit()) {
-            let mut cmd: String = "cargo ".into();
-            let cargo = cargo.trim_start();
-            // features are supported for the following
-            // (b)uild, bench, doc, (r)un, test, install
-            if let Some(features) = features.as_ref() {
-                if cargo.starts_with('b')
-                    || cargo.starts_with("check")
-                    || cargo.starts_with("doc")
-                    || cargo.starts_with('r')
-                    || cargo.starts_with("test")
-                    || cargo.starts_with("install")
-                {
-                    // Split command into first word and the arguments
-                    let word_boundary = cargo
-                        .find(|c: char| c.is_whitespace())
-                        .unwrap_or_else(|| cargo.len());
-
-                    // Find returns the byte index, and split_at takes a byte offset.
-                    // This means the splitting is unicode-safe.
-                    let (subcommand, args) = cargo.split_at(word_boundary);
-                    cmd.push_str(subcommand);
-                    cmd.push_str(" --features ");
-                    cmd.push_str(features);
-                    cmd.push(' ');
-                    cmd.push_str(args)
-                } else {
-                    cmd.push_str(&cargo);
-                }
-            } else {
-                cmd.push_str(&cargo);
-            }
-            commands.push(cmd);
-        }
-    }
-
-    // Shell commands go last
-    if matches.is_present("cmd:shell") {
-        for shell in values_t!(matches, "cmd:shell", String).unwrap_or_else(|e| e.exit()) {
-            commands.push(shell);
-        }
-    }
-
     if matches.is_present("cmd:trail") {
         debug!("trailing command is present, ignore all other command options");
         commands = vec![values_t!(matches, "cmd:trail", String)
@@ -68,6 +23,46 @@ pub fn set_commands(builder: &mut ConfigBuilder, matches: &ArgMatches) {
             .map(|arg| shell_escape::escape(arg.into()))
             .collect::<Vec<_>>()
             .join(" ")];
+    } else {
+        let command_order = env::args().filter_map(|arg| match arg.as_str() {
+            "-x" | "--exec" => Some("cargo"),
+            "-s" | "--shell" => Some("shell"),
+            _ => None,
+        });
+
+        let mut cargos = if matches.is_present("cmd:cargo") {
+            values_t!(matches, "cmd:cargo", String).unwrap_or_else(|e| e.exit())
+        } else {
+            Vec::new()
+        }
+        .into_iter();
+        let mut shells = if matches.is_present("cmd:shell") {
+            values_t!(matches, "cmd:shell", String).unwrap_or_else(|e| e.exit())
+        } else {
+            Vec::new()
+        }
+        .into_iter();
+
+        for c in command_order {
+            match c {
+                "cargo" => {
+                    commands.push(cargo_command(
+                        cargos
+                            .next()
+                            .expect("Argument-order mismatch, this is a bug"),
+                        &features,
+                    ));
+                }
+                "shell" => {
+                    commands.push(
+                        shells
+                            .next()
+                            .expect("Argument-order mismatch, this is a bug"),
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 
     // Default to `cargo check`
@@ -82,6 +77,41 @@ pub fn set_commands(builder: &mut ConfigBuilder, matches: &ArgMatches) {
 
     debug!("Commands: {:?}", commands);
     builder.cmd(commands);
+}
+
+fn cargo_command(cargo: String, features: &Option<String>) -> String {
+    let mut cmd = String::from("cargo ");
+
+    let cargo = cargo.trim_start();
+    if let Some(features) = features.as_ref() {
+        if cargo.starts_with('b')
+            || cargo.starts_with("check")
+            || cargo.starts_with("doc")
+            || cargo.starts_with('r')
+            || cargo.starts_with("test")
+            || cargo.starts_with("install")
+        {
+            // Split command into first word and the arguments
+            let word_boundary = cargo
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or_else(|| cargo.len());
+
+            // Find returns the byte index, and split_at takes a byte offset.
+            // This means the splitting is unicode-safe.
+            let (subcommand, args) = cargo.split_at(word_boundary);
+            cmd.push_str(subcommand);
+            cmd.push_str(" --features ");
+            cmd.push_str(features);
+            cmd.push(' ');
+            cmd.push_str(args);
+        } else {
+            cmd.push_str(&cargo);
+        }
+    } else {
+        cmd.push_str(&cargo);
+    }
+
+    cmd
 }
 
 pub fn set_ignores(builder: &mut ConfigBuilder, matches: &ArgMatches) {

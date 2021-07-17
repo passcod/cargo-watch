@@ -11,10 +11,7 @@ use wait_timeout::ChildExt;
 
 fn touch(n: u8) -> io::Result<()> {
     let path: PathBuf = format!("./tests/touchdata/{}.txt", n).into();
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open(path)?;
+    let mut file = OpenOptions::new().create(true).write(true).open(path)?;
 
     writeln!(&mut file, "{:?}", Instant::now())?;
     Ok(())
